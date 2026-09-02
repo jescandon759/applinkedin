@@ -1,23 +1,28 @@
 """
 LinkedIn Impulsa · Gestión de Recompensa Total
 Prototipo académico para el puesto de Ingeniero(a) de Confiabilidad de Sistemas.
-
+ 
 Todos los montos y metas son supuestos académicos del equipo y NO son
 objetivos internos ni precios oficiales de LinkedIn.
 """
-
+ 
+import hashlib
+import json
+from datetime import date
+from pathlib import Path
+ 
 import pandas as pd
 import streamlit as st
-
+ 
 st.set_page_config(
     page_title="LinkedIn Impulsa",
     page_icon="💼",
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
+ 
 # ------------------------------------------------------------------ paleta
-
+ 
 AZUL = "#0A66C2"
 AZUL_OSC = "#004182"
 VERDE = "#046A38"
@@ -29,14 +34,14 @@ GRIS_CLARO = "#6B6B6B"
 LINEA = "#D0CCC6"
 LIENZO = "#F1EFEB"
 BLANCO = "#FFFFFF"
-
+ 
 SALARIO_MENSUAL = 75_000
 SALARIO_ANUAL = SALARIO_MENSUAL * 12
 TOPE_ANUAL = 0.03
 BONO_MAX = SALARIO_ANUAL * TOPE_ANUAL / 4      # $6,750
 COSTO_HORA = SALARIO_MENSUAL / 160             # $468.75
 PILOTO = 20
-
+ 
 NIVELES = [
     ("Excelencia", 950, 1000, VERDE),
     ("Liderazgo", 850, 949, AZUL),
@@ -44,10 +49,10 @@ NIVELES = [
     ("Construcción", 500, 699, AMBAR),
     ("Inicio", 0, 499, GRIS_CLARO),
 ]
-
+ 
 # ------------------------------------------------------------------ puntos
-
-
+ 
+ 
 def pts_confiabilidad(v):
     if v >= 99.95:
         return 250, "≥ 99.95 %"
@@ -56,8 +61,8 @@ def pts_confiabilidad(v):
     if v >= 99.80:
         return 90, "99.80 – 99.899 %"
     return 0, "< 99.80 %"
-
-
+ 
+ 
 def pts_recuperacion(v):
     if v < 60:
         return 180, "< 60 min"
@@ -66,8 +71,8 @@ def pts_recuperacion(v):
     if v <= 240:
         return 60, "121 – 240 min"
     return 0, "> 240 min"
-
-
+ 
+ 
 def pts_prevencion(v):
     if v >= 90:
         return 200, "≥ 90 %"
@@ -76,8 +81,8 @@ def pts_prevencion(v):
     if v >= 70:
         return 75, "70 – 79 %"
     return 0, "< 70 %"
-
-
+ 
+ 
 def pts_automatizacion(v):
     if v >= 5:
         return 170, "≥ 5 h/mes"
@@ -86,30 +91,30 @@ def pts_automatizacion(v):
     if v >= 1:
         return 60, "1 – 2.9 h/mes"
     return 0, "< 1 h/mes"
-
-
+ 
+ 
 def pts_cultura(v):
     return {2: (100, "2 acciones verificadas"), 1: (50, "1 acción verificada")}.get(
         v, (0, "Sin acciones")
     )
-
-
+ 
+ 
 def pts_desarrollo(v):
     return {
         "Curso + aplicación real": (50, "Curso aplicado"),
         "Solo curso completado": (25, "Solo curso"),
         "Sin evidencia": (0, "Sin evidencia"),
     }[v]
-
-
+ 
+ 
 def pts_bienestar(v):
     return {
         "Cumple el protocolo": (50, "Protocolo cumplido"),
         "Cumplimiento parcial": (25, "Parcial"),
         "No cumple": (0, "No cumple"),
     }[v]
-
-
+ 
+ 
 INDICADORES = [
     dict(n=1, eje="Técnico", nombre="Confiabilidad del servicio", max=250,
          meta="Disponibilidad trimestral ≥ 99.95 %",
@@ -147,7 +152,7 @@ INDICADORES = [
          tramos="Cumple → 50 · Parcial → 25 · No cumple → 0",
          key="bienestar", fn=pts_bienestar),
 ]
-
+ 
 DEFAULTS = {
     "disponibilidad": 99.93,
     "recuperacion": 45,
@@ -157,29 +162,25 @@ DEFAULTS = {
     "desarrollo": "Curso + aplicación real",
     "bienestar": "Cumple el protocolo",
 }
-HISTORIAL = [("Q1 2026", 712), ("Q2 2026", 868)]
-
-st.session_state.setdefault("nav", "Inicio")
-for k, v in DEFAULTS.items():
-    st.session_state.setdefault(k, v)
-
-
+ 
+ 
+ 
 def calcular():
     filas, total = [], 0
     for ind in INDICADORES:
-        p, etiqueta = ind["fn"](st.session_state[ind["key"]])
+        p, etiqueta = ind["fn"](st.session_state.get(ind["key"], DEFAULTS[ind["key"]]))
         total += p
         filas.append({**ind, "puntos": p, "tramo": etiqueta})
     return filas, total
-
-
+ 
+ 
 def nivel_de(t):
     for nombre, lo, hi, color in NIVELES:
         if lo <= t <= hi:
             return nombre, color
     return "Inicio", GRIS_CLARO
-
-
+ 
+ 
 def bono_de(t):
     if t >= 950:
         return BONO_MAX
@@ -188,22 +189,130 @@ def bono_de(t):
     if t >= 700:
         return BONO_MAX * 0.50
     return 0.0
-
-
+ 
+ 
 def mxn(v):
     return f"${v:,.2f}" if v % 1 else f"${v:,.0f}"
-
-
+ 
+ 
+# ------------------------------------------------------------------ usuarios
+# Prototipo académico. Las contraseñas se guardan como hash SHA-256, nunca en
+# claro, pero un sistema real usaría el inicio de sesión corporativo (SSO) y
+# jamás llevaría credenciales dentro del repositorio.
+ 
+ARCHIVO = Path(__file__).resolve().parent / "datos_usuarios.json"
+CLAVE_DEMO = "impulsa2026"
+ 
+ 
+def _h(p):
+    return hashlib.sha256(p.encode("utf-8")).hexdigest()
+ 
+ 
+USUARIOS = {
+    "amorales": dict(nombre="Alex Morales", iniciales="AM", rol="colaborador",
+                     equipo="SRE Core", pw=_h(CLAVE_DEMO)),
+    "lrivas": dict(nombre="Lucía Rivas", iniciales="LR", rol="colaborador",
+                   equipo="SRE Core", pw=_h(CLAVE_DEMO)),
+    "kmendez": dict(nombre="Karla Méndez", iniciales="KM", rol="rh",
+                    equipo="Recursos Humanos", pw=_h(CLAVE_DEMO)),
+}
+ 
+PERFILES_INICIALES = {
+    "amorales": {"disponibilidad": 99.93, "recuperacion": 45, "prevencion": 92,
+                 "automatizacion": 5.5, "cultura": 2,
+                 "desarrollo": "Curso + aplicación real",
+                 "bienestar": "Cumple el protocolo",
+                 "historial": [["Q1 2026", 712], ["Q2 2026", 868]],
+                 "consentimiento": None},
+    "lrivas": {"disponibilidad": 99.87, "recuperacion": 95, "prevencion": 78,
+               "automatizacion": 3.5, "cultura": 1,
+               "desarrollo": "Solo curso completado",
+               "bienestar": "Cumplimiento parcial",
+               "historial": [["Q1 2026", 540], ["Q2 2026", 636]],
+               "consentimiento": None},
+    "kmendez": {**DEFAULTS, "historial": [], "consentimiento": None},
+}
+ 
+CAMPOS = list(DEFAULTS.keys())
+ 
+ 
+def cargar_todo():
+    """Lee el archivo de progreso. Si no existe o falla, parte de los datos base."""
+    if ARCHIVO.exists():
+        try:
+            guardado = json.loads(ARCHIVO.read_text(encoding="utf-8"))
+            base = json.loads(json.dumps(PERFILES_INICIALES))
+            for u, d in guardado.items():
+                if u in base:
+                    base[u].update(d)
+            return base
+        except Exception:
+            pass
+    return json.loads(json.dumps(PERFILES_INICIALES))
+ 
+ 
+def guardar_todo(datos):
+    """Escribe el progreso a disco. Devuelve False si el entorno es de solo lectura."""
+    try:
+        ARCHIVO.write_text(json.dumps(datos, ensure_ascii=False, indent=2), encoding="utf-8")
+        return True
+    except Exception:
+        return False
+ 
+ 
+st.session_state.setdefault("datos", cargar_todo())
+st.session_state.setdefault("usuario", None)
+st.session_state.setdefault("nav", "Inicio")
+ 
+ 
+def entrar(usuario):
+    """Carga el progreso de esa persona en la sesión."""
+    st.session_state["usuario"] = usuario
+    perfil = st.session_state["datos"][usuario]
+    for c in CAMPOS:
+        st.session_state[c] = perfil.get(c, DEFAULTS[c])
+    st.session_state["nav"] = "Inicio"
+ 
+ 
+def salir():
+    st.session_state["usuario"] = None
+    for c in CAMPOS:
+        st.session_state.pop(c, None)
+ 
+ 
+def sincronizar():
+    """Guarda en el perfil los valores que la persona acaba de mover."""
+    u = st.session_state.get("usuario")
+    if not u:
+        return
+    perfil = st.session_state["datos"][u]
+    cambio = False
+    for c in CAMPOS:
+        if c in st.session_state and perfil.get(c) != st.session_state[c]:
+            perfil[c] = st.session_state[c]
+            cambio = True
+    if cambio:
+        guardar_todo(st.session_state["datos"])
+ 
+ 
+def puntos_de(perfil):
+    """Puntos totales de un perfil guardado, sin tocar la sesión."""
+    t = 0
+    for ind in INDICADORES:
+        t += ind["fn"](perfil.get(ind["key"], DEFAULTS[ind["key"]]))[0]
+    return t
+ 
+ 
 # ------------------------------------------------------------------ estilos
 # Se fuerza el tema CLARO desde el código, sin depender de .streamlit/config.toml.
 # Primero se neutraliza el tema de Streamlit; después van los estilos propios,
 # para que ganen los empates de especificidad.
-
+ 
 st.markdown(
     f"""
 <style>
   :root {{ color-scheme: light; }}
-
+ 
   /* ---- 1. neutralizar el tema oscuro de Streamlit ---- */
   html, body, .stApp,
   [data-testid="stAppViewContainer"],
@@ -248,10 +357,28 @@ st.markdown(
   }}
   .react-aria-ListBoxItem[data-focused], .react-aria-ListBoxItem[data-hovered],
   ul[data-baseweb="menu"] li:hover {{ background-color: #E9F0F9 !important; }}
-
+ 
+  /* formulario y campos de texto */
+  [data-testid="stForm"] {{
+      background-color: {BLANCO} !important; border: 1px solid {LINEA} !important;
+      border-radius: 12px !important; padding: 22px 24px !important;
+  }}
+  [data-testid="stTextInput"] > div,
+  [data-testid="stTextInputRootElement"],
+  [data-testid="stTextInput"] .react-aria-Group {{
+      background-color: {BLANCO} !important; border: 1px solid {LINEA} !important;
+      border-radius: 8px !important;
+  }}
+  [data-testid="stTextInput"] input {{
+      background-color: transparent !important; color: {TINTA} !important;
+      font-size: 16px !important;
+  }}
+  [data-testid="stTextInput"] button svg {{ color: {GRIS} !important; fill: {GRIS} !important; }}
+  [data-testid="stCheckbox"] p {{ color: {TINTA} !important; font-size: 15px !important; }}
+ 
   /* el rojo por defecto de Streamlit -> azul LinkedIn */
   [data-testid="stSlider"] {{ filter: hue-rotate(212deg) saturate(1.2); }}
-
+ 
   /* menú lateral hecho con botones, no con radios */
   section[data-testid="stSidebar"] .stButton button {{
       width: 100% !important; justify-content: flex-start !important;
@@ -281,30 +408,30 @@ st.markdown(
   section[data-testid="stSidebar"] {{ background: {BLANCO} !important; border-right: 1px solid {LINEA}; }}
   section[data-testid="stSidebar"] > div {{ background: {BLANCO} !important; }}
   hr {{ border-color: {LINEA} !important; }}
-
+ 
   /* ---- 2. tipografía general ---- */
   .block-container {{ padding-top: 2rem; max-width: 1150px; }}
   .stApp {{ font-size: 16px; }}
   .stApp h2 {{ font-size: 30px !important; letter-spacing: -.02em; margin-bottom: .2em; }}
   .stApp h3 {{ font-size: 23px !important; letter-spacing: -.01em; }}
   .stApp h4 {{ font-size: 19px !important; }}
-
+ 
   /* ---- 3. componentes propios ---- */
   .marca {{ display:flex; align-items:center; gap:12px; margin-bottom:2px; }}
   .marca .in {{ background:{AZUL}; color:#fff; font-weight:700; font-size:22px;
        width:40px; height:40px; border-radius:8px; display:flex;
        align-items:center; justify-content:center; }}
   .marca .nm {{ font-size:30px; font-weight:700; color:{TINTA}; letter-spacing:-.02em; }}
-
+ 
   .eyebrow {{ font-size:12px; letter-spacing:.16em; text-transform:uppercase;
        color:{AZUL}; font-weight:700; margin-bottom:8px; }}
   .lead {{ font-size:19px; color:{GRIS}; line-height:1.5; max-width:60ch; margin:6px 0 22px; }}
-
+ 
   .card {{ background:{BLANCO}; border:1px solid {LINEA}; border-radius:12px;
        padding:20px 22px; margin-bottom:14px; }}
   .card h4 {{ margin:0 0 8px 0; font-size:19px; color:{TINTA}; font-weight:700; }}
   .card p {{ margin:0; color:{GRIS}; font-size:16px; line-height:1.6; }}
-
+ 
   .ind {{ background:{BLANCO}; border:1px solid {LINEA};
        border-left:5px solid var(--c,{AZUL}); border-radius:12px;
        padding:18px 20px; margin-bottom:14px; height:100%; }}
@@ -316,24 +443,24 @@ st.markdown(
   .ind .val {{ font-size:16px; color:{TINTA}; line-height:1.5; margin-top:2px; }}
   .ind .tr {{ font-size:14px; color:{GRIS}; margin-top:14px; padding-top:12px;
        border-top:1px solid {LINEA}; }}
-
+ 
   .barra {{ height:12px; background:#E2DFDA; border-radius:99px; overflow:hidden; margin:8px 0 4px; }}
   .barra i {{ display:block; height:100%; border-radius:99px; }}
-
+ 
   .chip {{ display:inline-block; font-size:13px; letter-spacing:.06em; text-transform:uppercase;
        font-weight:700; padding:5px 13px; border-radius:99px; }}
-
+ 
   .fila {{ display:flex; justify-content:space-between; align-items:center; gap:14px;
        padding:13px 0; border-bottom:1px solid {LINEA}; }}
   .fila:last-child {{ border-bottom:none; }}
   .fila .iz {{ font-size:16px; color:{TINTA}; }}
   .fila .iz small {{ display:block; color:{GRIS_CLARO}; font-size:14px; margin-top:3px; }}
   .fila .de {{ font-weight:700; font-size:17px; white-space:nowrap; }}
-
+ 
   .aviso {{ background:#FFF6DF; border-left:5px solid {AMBAR}; border-radius:0 12px 12px 0;
        padding:16px 20px; font-size:16px; color:{TINTA}; line-height:1.6; margin:14px 0; }}
   .aviso b {{ color:{TINTA}; }}
-
+ 
   .paso {{ background:{BLANCO}; border:1px solid {LINEA}; border-radius:12px; padding:18px 12px;
        text-align:center; height:100%; }}
   .paso .n {{ width:34px; height:34px; border-radius:50%; background:{AZUL}; color:#fff;
@@ -341,23 +468,126 @@ st.markdown(
        justify-content:center; margin:0 auto 10px; }}
   .paso .t {{ font-weight:700; font-size:16px; color:{TINTA}; }}
   .paso .d {{ font-size:14px; color:{GRIS}; margin-top:5px; line-height:1.45; }}
-
+ 
   .nota {{ font-size:14px; color:{GRIS_CLARO}; }}
   .grande {{ font-size:46px; font-weight:700; line-height:1.05; letter-spacing:-.03em; }}
 </style>
 """,
     unsafe_allow_html=True,
 )
-
+ 
+# ------------------------------------------------------------------ acceso
+ 
+if st.session_state["usuario"] is None:
+    izq, centro, der = st.columns([1, 1.5, 1])
+    with centro:
+        st.markdown(
+            '<div class="marca" style="justify-content:center;margin-top:30px">'
+            '<div class="in">in</div><div class="nm">LinkedIn Impulsa</div></div>'
+            f'<p style="text-align:center;color:{GRIS};font-size:16px;margin:4px 0 22px">'
+            "Gestión de Recompensa Total</p>",
+            unsafe_allow_html=True,
+        )
+        with st.form("acceso", border=False):
+            st.markdown("#### Inicia sesión")
+            u = st.text_input("Usuario")
+            p = st.text_input("Contraseña", type="password")
+            ok = st.form_submit_button("Entrar", type="primary", use_container_width=True)
+        if ok:
+            clave = u.strip().lower()
+            if clave in USUARIOS and USUARIOS[clave]["pw"] == _h(p):
+                entrar(clave)
+                st.rerun()
+            else:
+                st.error("Usuario o contraseña incorrectos.")
+ 
+        st.markdown(
+            f'<div class="card" style="background:#E9F0F9">'
+            f'<h4>Usuarios de demostración</h4>'
+            f'<div class="fila"><div class="iz"><b>amorales</b>'
+            f"<small>Alex Morales · colaborador con trimestre alto</small></div>"
+            f'<div class="de" style="color:{AZUL}">{CLAVE_DEMO}</div></div>'
+            f'<div class="fila"><div class="iz"><b>lrivas</b>'
+            f"<small>Lucía Rivas · colaboradora con trimestre bajo</small></div>"
+            f'<div class="de" style="color:{AZUL}">{CLAVE_DEMO}</div></div>'
+            f'<div class="fila"><div class="iz"><b>kmendez</b>'
+            f"<small>Karla Méndez · Recursos Humanos, solo ve agregados</small></div>"
+            f'<div class="de" style="color:{AZUL}">{CLAVE_DEMO}</div></div>'
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<p class="nota" style="text-align:center">Prototipo académico. Las '
+            "contraseñas se guardan como hash SHA-256; un sistema real usaría el "
+            "inicio de sesión corporativo y nunca credenciales dentro del código.</p>",
+            unsafe_allow_html=True,
+        )
+    st.stop()
+ 
+USUARIO = st.session_state["usuario"]
+YO = USUARIOS[USUARIO]
+PERFIL = st.session_state["datos"][USUARIO]
+ 
+# ---- aviso de privacidad y consentimiento (LFPDPPP) ----
+if not PERFIL.get("consentimiento"):
+    izq, centro, der = st.columns([1, 2, 1])
+    with centro:
+        st.markdown(
+            f'<div class="marca" style="margin-top:24px"><div class="in">in</div>'
+            f'<div class="nm">Aviso de privacidad</div></div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f'<div class="card"><h4>Qué datos usa esta aplicación</h4><p>'
+            "<b>Sí registra:</b> disponibilidad del servicio, tiempos de recuperación, "
+            "acciones preventivas, horas ahorradas por automatización, cursos "
+            "acreditados y cumplimiento del protocolo de guardia.<br><br>"
+            "<b>Nunca registra:</b> horas de sueño, nivel de estrés, biometría, "
+            "información de salud ni datos de tu vida personal.<br><br>"
+            "<b>Quién los ve:</b> tú y tu líder directo ven tu detalle. Recursos "
+            "Humanos ve únicamente promedios del equipo, nunca resultados "
+            "individuales.<br><br>"
+            "<b>Tus derechos:</b> puedes solicitar acceso, rectificación, cancelación "
+            "u oposición sobre tus datos en cualquier momento (derechos ARCO, Ley "
+            "Federal de Protección de Datos Personales en Posesión de los "
+            "Particulares).</p></div>",
+            unsafe_allow_html=True,
+        )
+        acepto = st.checkbox(
+            "He leído el aviso y autorizo el tratamiento de estos datos laborales."
+        )
+        c1, c2 = st.columns(2)
+        if c1.button("Continuar", type="primary", use_container_width=True, disabled=not acepto):
+            PERFIL["consentimiento"] = date.today().isoformat()
+            guardar_todo(st.session_state["datos"])
+            st.rerun()
+        if c2.button("Salir", use_container_width=True):
+            salir()
+            st.rerun()
+    st.stop()
+ 
+PANTALLAS = (["Inicio", "Retos", "Equipo", "Perfil"] if YO["rol"] == "rh"
+             else ["Inicio", "Retos", "Progreso", "Recompensas", "Carrera", "Perfil"])
+if st.session_state["nav"] not in PANTALLAS:
+    st.session_state["nav"] = "Inicio"
+ 
+HIST_ACTUAL = [tuple(x) for x in PERFIL.get("historial", [])]
+ 
 # ------------------------------------------------------------------ sidebar
-
+ 
 with st.sidebar:
     st.markdown(
         '<div class="marca"><div class="in">in</div><div class="nm">Impulsa</div></div>'
-        f'<div class="nota" style="margin-bottom:14px">Gestión de Recompensa Total</div>',
+        f'<div class="nota" style="margin-bottom:14px">Gestión de Recompensa Total</div>'
+        f'<div class="card" style="padding:14px 16px;margin-bottom:14px">'
+        f'<div style="display:flex;gap:11px;align-items:center">'
+        f'<div style="width:40px;height:40px;border-radius:50%;background:{AZUL};color:#fff;'
+        f'display:flex;align-items:center;justify-content:center;font-weight:700">{YO["iniciales"]}</div>'
+        f'<div><div style="font-weight:700;font-size:15px;color:{TINTA}">{YO["nombre"]}</div>'
+        f'<div class="nota" style="font-size:13px">{YO["equipo"]}</div></div></div></div>',
         unsafe_allow_html=True,
     )
-    for _p in ["Inicio", "Retos", "Progreso", "Recompensas", "Carrera", "Perfil"]:
+    for _p in PANTALLAS:
         if st.button(
             _p,
             key=f"nav_{_p}",
@@ -368,28 +598,46 @@ with st.sidebar:
             st.rerun()
     pantalla = st.session_state["nav"]
     st.divider()
-    _, t_ = calcular()
-    n_, c_ = nivel_de(t_)
-    st.markdown(
-        f'<div class="nota">Trimestre en curso</div>'
-        f'<div style="font-size:40px;font-weight:700;color:{TINTA};line-height:1.05">{t_}'
-        f'<span style="font-size:17px;color:{GRIS_CLARO};font-weight:400"> / 1,000</span></div>'
-        f'<div style="margin:8px 0 16px"><span class="chip" style="background:{c_}1A;color:{c_}">{n_}</span></div>'
-        f'<div class="nota">Incentivo proyectado</div>'
-        f'<div style="font-size:26px;font-weight:700;color:{VERDE}">{mxn(bono_de(t_))}</div>',
-        unsafe_allow_html=True,
-    )
+ 
+    if YO["rol"] == "colaborador":
+        _, t_ = calcular()
+        n_, c_ = nivel_de(t_)
+        st.markdown(
+            f'<div class="nota">Trimestre en curso</div>'
+            f'<div style="font-size:40px;font-weight:700;color:{TINTA};line-height:1.05">{t_}'
+            f'<span style="font-size:17px;color:{GRIS_CLARO};font-weight:400"> / 1,000</span></div>'
+            f'<div style="margin:8px 0 16px"><span class="chip" style="background:{c_}1A;color:{c_}">{n_}</span></div>'
+            f'<div class="nota">Incentivo proyectado</div>'
+            f'<div style="font-size:26px;font-weight:700;color:{VERDE}">{mxn(bono_de(t_))}</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f'<div class="nota">Perfil de Recursos Humanos</div>'
+            f'<div style="font-size:15px;color:{TINTA};line-height:1.5;margin-top:6px">'
+            "Solo con acceso a promedios del equipo. Los resultados individuales "
+            "no se muestran en este perfil.</div>",
+            unsafe_allow_html=True,
+        )
     st.divider()
+    if st.button("Cerrar sesión", use_container_width=True):
+        sincronizar()
+        salir()
+        st.rerun()
     st.caption(
         "Prototipo académico. Metas y montos son supuestos del equipo, "
         "no datos oficiales de LinkedIn."
     )
-
-filas, total = calcular()
-nivel, nivel_color = nivel_de(total)
-
+ 
+if YO["rol"] == "colaborador":
+    filas, total = calcular()
+    nivel, nivel_color = nivel_de(total)
+    sincronizar()
+else:
+    filas, total, nivel, nivel_color = [], 0, "—", GRIS_CLARO
+ 
 # ------------------------------------------------------------------ INICIO
-
+ 
 if pantalla == "Inicio":
     st.markdown(
         '<div class="marca"><div class="in">in</div>'
@@ -402,7 +650,7 @@ if pantalla == "Inicio":
         "<b>Ingeniero(a) de Confiabilidad de Sistemas</b>.</p>",
         unsafe_allow_html=True,
     )
-
+ 
     c = st.columns(4)
     for col, (lab, val) in zip(
         c,
@@ -415,14 +663,14 @@ if pantalla == "Inicio":
             f'<div class="grande" style="color:{AZUL};margin-top:4px">{val}</div></div>',
             unsafe_allow_html=True,
         )
-
+ 
     st.markdown(
         '<div class="aviso"><b>Retos → Evidencia → Recompensa → Carrera.</b><br>'
         "No se premia “hacer más”. Se premia cumplir un estándar verificable, "
         "sostenible y con evidencia.</div>",
         unsafe_allow_html=True,
     )
-
+ 
     st.markdown("### Cómo funciona")
     pasos = [
         ("Meta", "Qué lograr y antes de cuándo"),
@@ -439,7 +687,7 @@ if pantalla == "Inicio":
             f'<div class="t">{t}</div><div class="d">{d}</div></div>',
             unsafe_allow_html=True,
         )
-
+ 
     st.markdown("### El puesto elegido")
     st.markdown(
         f'<div class="card" style="border-left:5px solid {AZUL}">'
@@ -451,11 +699,11 @@ if pantalla == "Inicio":
         "encuestas de popularidad.</p></div>",
         unsafe_allow_html=True,
     )
-
+ 
     st.info("Abre **Progreso** en el menú de la izquierda para simular un trimestre completo.", icon="💡")
-
+ 
 # ------------------------------------------------------------------ RETOS
-
+ 
 elif pantalla == "Retos":
     st.markdown('<div class="eyebrow">02 · Retos</div>', unsafe_allow_html=True)
     st.markdown("## Siete indicadores, mil puntos")
@@ -465,7 +713,7 @@ elif pantalla == "Retos":
         "de LinkedIn.</p>",
         unsafe_allow_html=True,
     )
-
+ 
     st.markdown("### Indicadores técnicos · 800 puntos")
     tec = [i for i in INDICADORES if i["eje"] == "Técnico"]
     for par in (tec[:2], tec[2:]):
@@ -480,7 +728,7 @@ elif pantalla == "Retos":
                 f'<div class="tr">{ind["tramos"]}</div></div>',
                 unsafe_allow_html=True,
             )
-
+ 
     st.markdown("### Indicadores humanos · 200 puntos")
     cols = st.columns(3)
     for col, ind in zip(cols, [i for i in INDICADORES if i["eje"] == "Humano"]):
@@ -493,7 +741,7 @@ elif pantalla == "Retos":
             f'<div class="tr">{ind["tramos"]}</div></div>',
             unsafe_allow_html=True,
         )
-
+ 
     st.markdown("### Reglas contra la manipulación")
     a, b = st.columns(2)
     a.markdown(
@@ -509,9 +757,9 @@ elif pantalla == "Retos":
         "reconocimiento en un concurso de amigos.</p></div>",
         unsafe_allow_html=True,
     )
-
+ 
 # ------------------------------------------------------------------ PROGRESO
-
+ 
 elif pantalla == "Progreso":
     st.markdown('<div class="eyebrow">03 · Progreso</div>', unsafe_allow_html=True)
     st.markdown("## Simulador del trimestre")
@@ -520,7 +768,7 @@ elif pantalla == "Progreso":
         "puntos, el nivel y el incentivo.</p>",
         unsafe_allow_html=True,
     )
-
+ 
     r1, r2, r3 = st.columns(3)
     r1.markdown(
         f'<div class="card" style="text-align:center;margin-bottom:0">'
@@ -541,7 +789,7 @@ elif pantalla == "Progreso":
         f'<div class="grande" style="color:{VERDE}">{mxn(bono_de(total))}</div></div>',
         unsafe_allow_html=True,
     )
-
+ 
     st.markdown(
         f'<div class="barra" style="height:16px;margin-top:18px">'
         f'<i style="width:{total/10:.1f}%;background:{nivel_color}"></i></div>'
@@ -550,7 +798,7 @@ elif pantalla == "Progreso":
         "<span>1,000</span></div>",
         unsafe_allow_html=True,
     )
-
+ 
     falta = next((lo for _, lo, _, _ in reversed(NIVELES) if lo > total), None)
     if falta:
         sig = next(n for n, lo, _, _ in NIVELES if lo == falta)
@@ -564,9 +812,9 @@ elif pantalla == "Progreso":
             '<div class="aviso">Nivel máximo alcanzado en este trimestre.</div>',
             unsafe_allow_html=True,
         )
-
+ 
     izq, der = st.columns([1, 1])
-
+ 
     with izq:
         st.markdown("### Datos del trimestre")
         st.slider("1 · Disponibilidad del servicio (%)", 99.50, 100.00,
@@ -587,7 +835,7 @@ elif pantalla == "Progreso":
         st.selectbox("7 · Trabajo sostenible",
                      ["Cumple el protocolo", "Cumplimiento parcial", "No cumple"],
                      key="bienestar")
-
+ 
     with der:
         st.markdown("### Puntos por indicador")
         html = ['<div class="card">']
@@ -604,7 +852,7 @@ elif pantalla == "Progreso":
             )
         html.append("</div>")
         st.markdown("".join(html), unsafe_allow_html=True)
-
+ 
         evidencia = pd.DataFrame(
             [{"Indicador": f'{f["n"]}. {f["nombre"]}', "Eje": f["eje"],
               "Dato": st.session_state[f["key"]], "Tramo": f["tramo"],
@@ -617,9 +865,9 @@ elif pantalla == "Progreso":
             file_name="linkedin_impulsa_evidencia.csv",
             mime="text/csv",
         )
-
+ 
 # ------------------------------------------------------------------ RECOMPENSAS
-
+ 
 elif pantalla == "Recompensas":
     st.markdown('<div class="eyebrow">04 · Recompensa total</div>', unsafe_allow_html=True)
     st.markdown("## Dinero, tiempo, aprendizaje y carrera")
@@ -628,9 +876,9 @@ elif pantalla == "Recompensas":
         "una generación prefiere lo mismo que otra.</p>",
         unsafe_allow_html=True,
     )
-
+ 
     izq, der = st.columns([1, 1])
-
+ 
     with izq:
         st.markdown("### Incentivo financiero")
         st.markdown(
@@ -657,7 +905,7 @@ elif pantalla == "Recompensas":
             )
         html.append("</div>")
         st.markdown("".join(html), unsafe_allow_html=True)
-
+ 
         st.markdown(
             f'<div class="card"><h4>De dónde sale el máximo</h4><p>'
             f"Salario de referencia {mxn(SALARIO_MENSUAL)} al mes = {mxn(SALARIO_ANUAL)} al año.<br>"
@@ -665,7 +913,7 @@ elif pantalla == "Recompensas":
             f"Entre 4 trimestres = <b>{mxn(BONO_MAX)}</b>.</p></div>",
             unsafe_allow_html=True,
         )
-
+ 
     with der:
         st.markdown("### Recompensas no financieras")
         for i, (cat, nombre, costo, desc) in enumerate(
@@ -695,7 +943,7 @@ elif pantalla == "Recompensas":
             "de referencia. No es un precio oficial de LinkedIn.</p>",
             unsafe_allow_html=True,
         )
-
+ 
     st.markdown(
         '<div class="aviso"><b>Los incentivos económicos pasan por nómina.</b><br>'
         "Toda gratificación entregada por el trabajo integra el salario según el "
@@ -703,9 +951,9 @@ elif pantalla == "Recompensas":
         "laboral antes de pagarse.</div>",
         unsafe_allow_html=True,
     )
-
+ 
 # ------------------------------------------------------------------ CARRERA
-
+ 
 elif pantalla == "Carrera":
     st.markdown('<div class="eyebrow">05 · Carrera</div>', unsafe_allow_html=True)
     st.markdown("## El premio crece con la consistencia")
@@ -714,10 +962,10 @@ elif pantalla == "Carrera":
         "abren una revisión formal de desarrollo.</p>",
         unsafe_allow_html=True,
     )
-
-    historial = HISTORIAL + [("Q3 2026 · en curso", total)]
+ 
+    historial = HIST_ACTUAL + [("Q3 2026 · en curso", total)]
     promedio = sum(p for _, p in historial) / len(historial)
-
+ 
     html = ['<div class="card"><h4>Historial de puntos</h4>']
     for etiqueta, p in historial:
         n, c = nivel_de(p)
@@ -733,7 +981,7 @@ elif pantalla == "Carrera":
         f'<div class="de" style="color:{AZUL}">{promedio:,.0f} pts</div></div></div>'
     )
     st.markdown("".join(html), unsafe_allow_html=True)
-
+ 
     st.markdown("### Qué desbloqueas y cuándo")
     cols = st.columns(3)
     horizontes = [
@@ -761,7 +1009,7 @@ elif pantalla == "Carrera":
             f'<div class="val">' + "<br>".join(f"• {p}" for p in puntos) + "</div></div>",
             unsafe_allow_html=True,
         )
-
+ 
     st.markdown(
         '<div class="aviso"><b>La promoción no es automática.</b><br>'
         "La app solo activa una revisión formal de desarrollo. La decisión depende de "
@@ -769,13 +1017,13 @@ elif pantalla == "Carrera":
         "Los puntos desbloquean evidencia, no puestos.</div>",
         unsafe_allow_html=True,
     )
-
+ 
 # ------------------------------------------------------------------ PERFIL
-
+ 
 elif pantalla == "Perfil":
     st.markdown('<div class="eyebrow">06 · Perfil y reglas</div>', unsafe_allow_html=True)
     st.markdown("## Claro para la persona, seguro para la empresa")
-
+ 
     izq, der = st.columns([1, 1.2])
     with izq:
         st.markdown(
@@ -783,21 +1031,28 @@ elif pantalla == "Perfil":
             f'<div style="display:flex;gap:14px;align-items:center;margin-bottom:8px">'
             f'<div style="width:62px;height:62px;border-radius:50%;background:{AZUL};'
             f'color:#fff;display:flex;align-items:center;justify-content:center;'
-            f'font-weight:700;font-size:22px">AM</div>'
-            f'<div><div style="font-weight:700;font-size:20px;color:{TINTA}">Alex Morales</div>'
-            f'<div style="color:{GRIS};font-size:15px">Ingeniero(a) de confiabilidad</div></div></div>'
+            f'font-weight:700;font-size:22px">{YO["iniciales"]}</div>'
+            f'<div><div style="font-weight:700;font-size:20px;color:{TINTA}">{YO["nombre"]}</div>'
+            f'<div style="color:{GRIS};font-size:15px">{YO["equipo"]}</div></div></div>'
             f'<div class="fila"><div class="iz">Ciclo actual</div>'
             f'<div class="de">Q3 2026 · 90 días</div></div>'
-            f'<div class="fila"><div class="iz">Puntos</div>'
-            f'<div class="de" style="color:{nivel_color}">{total:,} / 1,000</div></div>'
-            f'<div class="fila"><div class="iz">Nivel</div>'
-            f'<div class="de" style="color:{nivel_color}">{nivel}</div></div>'
-            f'<div class="fila"><div class="iz">Incentivo proyectado</div>'
-            f'<div class="de" style="color:{VERDE}">{mxn(bono_de(total))}</div></div>'
-            f"</div>",
+            + (f'<div class="fila"><div class="iz">Puntos</div>'
+               f'<div class="de" style="color:{nivel_color}">{total:,} / 1,000</div></div>'
+               f'<div class="fila"><div class="iz">Nivel</div>'
+               f'<div class="de" style="color:{nivel_color}">{nivel}</div></div>'
+               f'<div class="fila"><div class="iz">Incentivo proyectado</div>'
+               f'<div class="de" style="color:{VERDE}">{mxn(bono_de(total))}</div></div>'
+               if YO["rol"] == "colaborador" else
+               f'<div class="fila"><div class="iz">Rol</div>'
+               f'<div class="de">Recursos Humanos</div></div>'
+               f'<div class="fila"><div class="iz">Alcance de datos</div>'
+               f'<div class="de">Solo agregados</div></div>')
+            + f'<div class="fila"><div class="iz">Consentimiento</div>'
+              f'<div class="de">{PERFIL.get("consentimiento") or "—"}</div></div>'
+            + f"</div>",
             unsafe_allow_html=True,
         )
-
+ 
     with der:
         for et, tit, txt in [
             ("Datos", "Privacidad desde el diseño",
@@ -818,7 +1073,7 @@ elif pantalla == "Perfil":
                 f'<div class="val" style="margin-top:6px">{txt}</div></div>',
                 unsafe_allow_html=True,
             )
-
+ 
     with st.expander("Fuentes y supuestos del modelo"):
         st.markdown(
             """
@@ -830,13 +1085,96 @@ elif pantalla == "Perfil":
 | Google SRE | Objetivos de confiabilidad, postmortems, trabajo repetitivo |
 | Gallup | Costo de reemplazo de 0.5 a 2 veces el salario anual |
 | Cámara de Diputados | LFT art. 84 y Ley Federal de Protección de Datos Personales |
-
+ 
 **Supuestos del caso:** salario de referencia $75,000 al mes · piloto de 20 personas ·
 incentivo máximo 3 % anual · 70 % de pago esperado. Ninguno es dato interno de LinkedIn.
             """
         )
-
+ 
     st.caption(
         "LinkedIn Impulsa es un prototipo académico. No está afiliado a LinkedIn "
         "Corporation ni representa sus políticas o compensaciones reales."
+    )
+ 
+# ------------------------------------------------------------------ EQUIPO (RH)
+ 
+elif pantalla == "Equipo":
+    st.markdown('<div class="eyebrow">03 · Equipo</div>', unsafe_allow_html=True)
+    st.markdown("## Vista de Recursos Humanos")
+    st.markdown(
+        '<p class="lead">Este perfil solo ve promedios y conteos. No muestra el '
+        "resultado de ninguna persona en particular.</p>",
+        unsafe_allow_html=True,
+    )
+ 
+    colaboradores = [u for u, d in USUARIOS.items() if d["rol"] == "colaborador"]
+    puntajes = [puntos_de(st.session_state["datos"][u]) for u in colaboradores]
+    n = len(puntajes) or 1
+    promedio = sum(puntajes) / n
+    presupuesto = sum(bono_de(p) for p in puntajes)
+    con_consentimiento = sum(
+        1 for u in colaboradores if st.session_state["datos"][u].get("consentimiento")
+    )
+ 
+    c = st.columns(4)
+    for col, (lab, val) in zip(
+        c,
+        [("Personas en el programa", str(len(colaboradores))),
+         ("Promedio de puntos", f"{promedio:,.0f}"),
+         ("Incentivo comprometido", mxn(presupuesto)),
+         ("Con consentimiento", f"{con_consentimiento}/{len(colaboradores)}")],
+    ):
+        col.markdown(
+            f'<div class="card" style="text-align:center;margin-bottom:0">'
+            f'<div class="nota">{lab}</div>'
+            f'<div class="grande" style="color:{AZUL};font-size:38px;margin-top:4px">{val}</div></div>',
+            unsafe_allow_html=True,
+        )
+ 
+    st.markdown("### Distribución por nivel")
+    html = ['<div class="card">']
+    for nombre_nivel, lo, hi, color in reversed(NIVELES):
+        cuantos = sum(1 for p in puntajes if lo <= p <= hi)
+        pct = cuantos / n * 100
+        html.append(
+            f'<div class="fila" style="border-bottom:none;padding-bottom:4px">'
+            f'<div class="iz"><b>{nombre_nivel}</b><small>{lo:,} – {hi:,} puntos</small></div>'
+            f'<div class="de" style="color:{color}">{cuantos} '
+            f'<span style="color:{GRIS_CLARO};font-weight:400">({pct:.0f} %)</span></div></div>'
+            f'<div class="barra" style="height:10px;margin:0 0 14px">'
+            f'<i style="width:{pct:.0f}%;background:{color}"></i></div>'
+        )
+    html.append("</div>")
+    st.markdown("".join(html), unsafe_allow_html=True)
+ 
+    st.markdown("### Señales de alerta del programa")
+    a, b = st.columns(2)
+    sin_incentivo = sum(1 for p in puntajes if p < 700)
+    a.markdown(
+        f'<div class="ind" style="--c:{AMBAR}">'
+        f'<div class="lab" style="margin-top:0">Cobertura del incentivo</div>'
+        f'<div class="nom" style="margin-top:2px">{sin_incentivo} de {len(colaboradores)} '
+        f"por debajo de 700 puntos</div>"
+        f'<div class="val" style="margin-top:6px">Si la mayoría queda fuera del umbral, '
+        "el problema suele estar en la meta, no en las personas. Toca revisar si el "
+        "estándar es alcanzable antes de culpar al desempeño.</div></div>",
+        unsafe_allow_html=True,
+    )
+    b.markdown(
+        f'<div class="ind" style="--c:{AZUL}">'
+        f'<div class="lab" style="margin-top:0">Privacidad</div>'
+        f'<div class="nom" style="margin-top:2px">Sin datos individuales</div>'
+        f'<div class="val" style="margin-top:6px">Este perfil no puede abrir el detalle '
+        "de una persona ni ordenar al equipo de mejor a peor. Un tablero público de "
+        "posiciones es la forma más rápida de romper la percepción de justicia del "
+        "programa.</div></div>",
+        unsafe_allow_html=True,
+    )
+ 
+    st.markdown(
+        '<div class="aviso"><b>Por qué RH no ve el detalle.</b><br>'
+        "Los datos del programa son datos personales laborales. Recursos Humanos "
+        "administra el presupuesto y vigila que el modelo funcione; para eso le bastan "
+        "los agregados. El detalle individual lo ven la persona y su líder directo.</div>",
+        unsafe_allow_html=True,
     )
